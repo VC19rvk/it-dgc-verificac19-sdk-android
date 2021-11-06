@@ -22,23 +22,23 @@
 
 package it.ministerodellasalute.verificaC19sdk.model
 
-import androidx.lifecycle.MediatorLiveData
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.*
 import com.google.gson.Gson
 import dagger.hilt.android.lifecycle.HiltViewModel
 import it.ministerodellasalute.verificaC19sdk.BuildConfig
+import it.ministerodellasalute.verificaC19sdk.VerificaApplication
 import it.ministerodellasalute.verificaC19sdk.data.VerifierRepository
 import it.ministerodellasalute.verificaC19sdk.data.local.Preferences
 import it.ministerodellasalute.verificaC19sdk.data.remote.model.Rule
-import it.ministerodellasalute.verificaC19sdk.model.ValidationRulesEnum
 import it.ministerodellasalute.verificaC19sdk.util.Utility
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
 class FirstViewModel @Inject constructor(
-    verifierRepository: VerifierRepository,
+    val verifierRepository: VerifierRepository,
     private val preferences: Preferences
-) : ViewModel(){
+) : ViewModel() {
 
     val fetchStatus: MediatorLiveData<Boolean> = MediatorLiveData()
 
@@ -48,6 +48,14 @@ class FirstViewModel @Inject constructor(
         }
     }
 
+    fun callForDownloadChunk() {
+        viewModelScope.launch {
+            verifierRepository.downloadChunk()
+        }
+    }
+
+    fun getResumeToken() = preferences.resumeToken
+
     /**
      *
      * This method gets the date of last fetch from the Shared Preferences.
@@ -55,23 +63,55 @@ class FirstViewModel @Inject constructor(
      */
     fun getDateLastSync() = preferences.dateLastFetch
 
-    private fun getValidationRules():Array<Rule>{
-        val jsonString = preferences.validationRulesJson
-        return Gson().fromJson(jsonString, Array<Rule>::class.java)?: kotlin.run { emptyArray() }
+    fun getDrlDateLastSync() = preferences.drlDateLastFetch
+    fun getTotalSizeInByte() = preferences.totalSizeInByte
+
+    fun getSizeSingleChunkInByte() = preferences.sizeSingleChunkInByte
+    fun getTotalChunk() = preferences.totalChunk //total number of chunks in a specific version
+    fun getIsSizeOverThreshold() = preferences.isSizeOverThreshold
+    fun getLastDownloadedChunk() = preferences.lastDownloadedChunk
+    fun getDownloadAvailable() = preferences.authorizedToDownload
+    fun setDownloadAsAvailable() =
+        run { preferences.authorizedToDownload = 1L }
+
+    fun getResumeAvailable() = preferences.authToResume
+    fun setResumeAsAvailable() =
+        run { preferences.authToResume = 1L }
+
+    fun setUnAuthResume() =
+        run { preferences.authToResume = 0L }
+
+    fun getIsPendingDownload(): Boolean {
+        return preferences.currentVersion != preferences.requestedVersion
     }
 
-    fun getAppMinVersion(): String{
-        return getValidationRules().find { it.name == ValidationRulesEnum.APP_MIN_VERSION.value}?.let {
-            it.value
-        } ?: run {
+    fun getIsDrlSyncActive() = preferences.isDrlSyncActive
+
+    fun shouldInitDownload() = preferences.shouldInitDownload
+
+    fun setShouldInitDownload(value: Boolean) = run {
+        preferences.shouldInitDownload = value
+    }
+
+    private fun getValidationRules(): Array<Rule> {
+        val jsonString = preferences.validationRulesJson
+        return Gson().fromJson(jsonString, Array<Rule>::class.java) ?: kotlin.run { emptyArray() }
+    }
+
+    fun getAppMinVersion(): String {
+        return getValidationRules().find { it.name == ValidationRulesEnum.APP_MIN_VERSION.value }
+            ?.let {
+                it.value
+            } ?: run {
             ""
         }
     }
 
-    private fun getSDKMinVersion(): String{
-        return getValidationRules().find { it.name == ValidationRulesEnum.SDK_MIN_VERSION.value}?.let {
-            it.value
-        } ?: run {
+    private fun getSDKMinVersion(): String {
+        return getValidationRules().find { it.name == ValidationRulesEnum.SDK_MIN_VERSION.value }
+            ?.let {
+                it.value
+            } ?: run {
             ""
         }
     }
@@ -84,5 +124,4 @@ class FirstViewModel @Inject constructor(
         }
         return false
     }
-
 }

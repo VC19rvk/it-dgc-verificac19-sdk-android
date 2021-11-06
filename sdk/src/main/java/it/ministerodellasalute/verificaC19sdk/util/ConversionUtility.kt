@@ -17,27 +17,25 @@
  *  limitations under the License.
  *  ---license-end
  *
- *  Created by mykhailo.nester on 4/24/21 2:20 PM
+ *  Created by nicolamcornelio on 28/09/2021, 14:06
  */
 
-package it.ministerodellasalute.verificaC19sdk.data
+package it.ministerodellasalute.verificaC19sdk.util
 
-import android.content.Context
-import androidx.lifecycle.LiveData
-import java.security.cert.Certificate
+object ConversionUtility {
 
-/**
- *
- * This interface defines the methods to download public certificates (i.e. settings) and check
- * the download status. These are overridden by the implementing class [VerifierRepositoryImpl].
- *
- */
-interface VerifierRepository {
+    fun byteToMegaByte(byteValue: Float): Float {
+        try {
+            return byteValue / 1048576
+        }
+        catch (e: Exception)
+        {
+            return 0f
+        }
+    }
 
-    suspend fun syncData(applicationContext: Context): Boolean?
-    suspend fun getCertificate(kid: String): Certificate?
-    suspend fun downloadChunk()
-    suspend fun isDrlInconsistent(): Boolean
-    fun getCertificateFetchStatus(): LiveData<Boolean>
-    suspend fun checkInBlackList(kid: String): Boolean
+    fun stringToBoolean(stringValue: String): Boolean {
+        return stringValue == "true"
+    }
 }
+

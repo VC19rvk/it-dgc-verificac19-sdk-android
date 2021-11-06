@@ -22,23 +22,31 @@
 
 package it.ministerodellasalute.verificaC19sdk.data
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.google.gson.Gson
 import dgca.verifier.app.decoder.base64ToX509Certificate
-import dgca.verifier.app.decoder.toBase64
+import io.realm.Realm
+import io.realm.RealmConfiguration
+import io.realm.exceptions.RealmPrimaryKeyConstraintException
+import io.realm.kotlin.where
 import it.ministerodellasalute.verificaC19sdk.data.local.AppDatabase
 import it.ministerodellasalute.verificaC19sdk.data.local.Blacklist
 import it.ministerodellasalute.verificaC19sdk.data.local.Key
 import it.ministerodellasalute.verificaC19sdk.data.local.Preferences
+import it.ministerodellasalute.verificaC19sdk.data.local.RevokedPass
 import it.ministerodellasalute.verificaC19sdk.data.remote.ApiService
+import it.ministerodellasalute.verificaC19sdk.data.remote.model.CertificateRevocationList
+import it.ministerodellasalute.verificaC19sdk.data.remote.model.CrlStatus
 import it.ministerodellasalute.verificaC19sdk.data.remote.model.Rule
 import it.ministerodellasalute.verificaC19sdk.di.DispatcherProvider
 import it.ministerodellasalute.verificaC19sdk.model.ValidationRulesEnum
 import it.ministerodellasalute.verificaC19sdk.security.KeyStoreCryptor
+import it.ministerodellasalute.verificaC19sdk.util.ConversionUtility
 import java.net.HttpURLConnection
-import java.security.MessageDigest
+import java.net.UnknownHostException
 import java.security.cert.Certificate
 import javax.inject.Inject
 
@@ -56,16 +64,37 @@ class VerifierRepositoryImpl @Inject constructor(
     private val dispatcherProvider: DispatcherProvider
 ) : BaseRepository(dispatcherProvider), VerifierRepository {
 
+    private var crlstatus: CrlStatus? = null
     private val validCertList = mutableListOf<String>()
     private val fetchStatus: MutableLiveData<Boolean> = MutableLiveData()
+    private lateinit var context: Context
+    private var realmSize: Int = 0
 
-    override suspend fun syncData(): Boolean? {
+    override suspend fun syncData(applicationContext: Context): Boolean? {
+        context = applicationContext
+        Realm.init(applicationContext)
+
         return execute {
             fetchStatus.postValue(true)
+            fetchValidationRules()
+            val jsonString = preferences.validationRulesJson
+            val validationRules = Gson().fromJson(jsonString, Array<Rule>::class.java)
 
-            if (fetchValidationRules() == false || fetchCertificates() == false) {
+            if (fetchCertificates() == false) {
                 fetchStatus.postValue(false)
                 return@execute false
+            }
+
+            validationRules.let {
+                for (rule in validationRules) {
+                    if (rule.name == "DRL_SYNC_ACTIVE") {
+                        preferences.isDrlSyncActive = ConversionUtility.stringToBoolean(rule.value)
+                        break
+                    }
+                }
+            }
+            if (preferences.isDrlSyncActive) {
+                getCRLStatus()
             }
 
             fetchStatus.postValue(false)
@@ -117,8 +146,15 @@ class VerifierRepositoryImpl @Inject constructor(
             }
 
             val resumeToken = preferences.resumeToken
-            if (fetchCertificate(resumeToken) == false) {
-                return@execute false
+            fetchCertificate(resumeToken)
+            db.keyDao().deleteAllExcept(validCertList.toTypedArray())
+
+            //if db is empty for a reason, refresh sharedprefs and DB
+            val recordCount = db.keyDao().getCount()
+            Log.i("record count", recordCount.toString())
+            if (recordCount.equals(0)) {
+                preferences.clear()
+                this.syncData(context)
             }
             db.keyDao().deleteAllExcept(validCertList.toTypedArray())
 
@@ -178,8 +214,288 @@ class VerifierRepositoryImpl @Inject constructor(
         }
     }
 
-    companion object {
+    override suspend fun isDrlInconsistent(): Boolean {
+        val response = apiService.getCRLStatus(preferences.currentVersion)
+        if (response.isSuccessful) {
+            val status = Gson().fromJson(response.body()?.string(), CrlStatus::class.java)
+            return outDatedVersion(status)
+        }
+        return false
+    }
 
+    private suspend fun getCRLStatus() {
+        val response = apiService.getCRLStatus(preferences.currentVersion)
+        if (response.isSuccessful) {
+            crlstatus = Gson().fromJson(response.body()?.string(), CrlStatus::class.java)
+            Log.i("CRL Status", crlstatus.toString())
+
+            crlstatus?.let { crlStatus ->
+                if (outDatedVersion(crlStatus)) {
+                    if (noPendingDownload() || preferences.authorizedToDownload == 1L) {
+                        saveCrlStatusInfo(crlStatus)
+                        if (isSizeOverThreshold(crlStatus) && preferences.authorizedToDownload == 0L && !preferences.shouldInitDownload) {
+                            preferences.isSizeOverThreshold = true
+                        } else {
+                            preferences.shouldInitDownload = false
+                            downloadChunk()
+                        }
+                    } else if (preferences.authToResume == 1L) {
+                        if (isSameChunkSize(crlStatus) && sameRequestedVersion(crlStatus)) downloadChunk()
+                        else clearDBAndPrefs()
+                    } else {
+                        preferences.authToResume = 0L
+                    }
+                } else {
+                    saveLastFetchDate()
+                    checkCurrentDownloadSize()
+                    if (!isDownloadCompleted()) {
+                        Log.i("MyTag", "final reconciliation failed!")
+                        clearDBAndPrefs()
+                    } else Log.i("MyTag", "final reconciliation completed!")
+                }
+            }
+        }
+    }
+
+    private fun saveCrlStatusInfo(crlStatus: CrlStatus) {
+        preferences.sizeSingleChunkInByte = crlStatus.sizeSingleChunkInByte
+        preferences.totalChunk = crlStatus.totalChunk
+        preferences.requestedVersion = crlStatus.version
+        preferences.currentVersion = crlStatus.fromVersion ?: 0L
+        preferences.totalSizeInByte = crlStatus.totalSizeInByte
+        preferences.chunk = crlStatus.chunk
+        preferences.totalNumberUCVI = crlStatus.totalNumberUCVI
+        preferences.authorizedToDownload = 0
+    }
+
+    private fun checkCurrentDownloadSize() {
+        val config =
+            RealmConfiguration.Builder().name(REALM_NAME).allowQueriesOnUiThread(true)
+                .build()
+        val realm: Realm = Realm.getInstance(config)
+        realm.executeTransaction { transactionRealm ->
+            realmSize = transactionRealm.where<RevokedPass>().findAll().size
+        }
+        realm.close()
+    }
+
+    private fun isDownloadCompleted() = preferences.totalNumberUCVI.toInt() == realmSize
+
+    private suspend fun getRevokeList(version: Long, chunk: Long = 1) {
+        try {
+            val response =
+                apiService.getRevokeList(preferences.currentVersion, chunk)
+            if (response.isSuccessful) {
+                val certificateRevocationList: CertificateRevocationList = Gson().fromJson(
+                    response.body()?.string(),
+                    CertificateRevocationList::class.java
+                )
+                if (version == certificateRevocationList.version) {
+                    processRevokeList(certificateRevocationList)
+                    preferences.lastDownloadedChunk = preferences.lastDownloadedChunk + 1
+                } else {
+                    clearDBAndPrefs()
+                }
+            }
+        } catch (e: UnknownHostException) {
+            preferences.authToResume = 0
+        } catch (e: Exception) {
+            e.localizedMessage?.let {
+                Log.i("exception", it)
+            }
+        }
+
+    }
+
+    private fun processRevokeList(certificateRevocationList: CertificateRevocationList) {
+        try {
+            val revokedUcviList = certificateRevocationList.revokedUcvi
+
+            if (revokedUcviList != null) {
+                Log.i("processRevokeList", " adding UCVI")
+                if (preferences.lastDownloadedChunk + 1 == 1L) {
+                    deleteAllFromRealm()
+                }
+                insertListToRealm(revokedUcviList)
+            } else if (certificateRevocationList.delta != null) {
+                Log.i("Delta", "delta")
+                val deltaInsertList = certificateRevocationList.delta.insertions
+                val deltaDeleteList = certificateRevocationList.delta.deletions
+
+                if (deltaInsertList != null) {
+                    Log.i("Delta", "delta insert")
+                    insertListToRealm(deltaInsertList)
+                }
+                if (deltaDeleteList != null) {
+                    Log.i("Delta", "delta delete")
+                    deleteListFromRealm(deltaDeleteList)
+                }
+            }
+        } catch (e: Exception) {
+            e.localizedMessage?.let {
+                Log.i("crl processing exception", it)
+            }
+        }
+
+    }
+
+    private suspend fun clearDBAndPrefs() {
+        try {
+            preferences.clearDrlPrefs()
+            deleteAllFromRealm()
+            this.syncData(context)
+        } catch (e: Exception) {
+            e.localizedMessage?.let {
+                Log.i("ClearDBClearPreds", it)
+            }
+        }
+    }
+
+    private fun noPendingDownload(): Boolean {
+        return preferences.currentVersion == preferences.requestedVersion
+    }
+
+    private fun outDatedVersion(crlStatus: CrlStatus): Boolean {
+        return (crlStatus.version != preferences.currentVersion)
+    }
+
+    private fun sameRequestedVersion(crlStatus: CrlStatus): Boolean {
+        return (crlStatus.version == preferences.requestedVersion)
+    }
+
+    private fun isSizeOverThreshold(crlStatus: CrlStatus): Boolean {
+        return (crlStatus.totalSizeInByte > 5000000)
+    }
+
+    private fun blockCRLdownload(crlStatus: CrlStatus): Boolean {
+        return preferences.blockCRLdownload == 1L
+    }
+
+    private fun chunkNotYetCompleted(crlStatus: CrlStatus): Boolean {
+        return !noMoreChunks(crlStatus)
+    }
+
+    private fun atLeastOneChunkDownloaded(): Boolean {
+        return (preferences.lastDownloadedChunk > 0)
+    }
+
+    private fun isSameChunkSize(crlStatus: CrlStatus): Boolean {
+        return (preferences.sizeSingleChunkInByte == crlStatus.sizeSingleChunkInByte)
+    }
+
+    override suspend fun downloadChunk() {
+        crlstatus?.let { status ->
+            preferences.authorizedToDownload = 1
+            preferences.authToResume = -1
+            preferences.blockCRLdownload = 0
+            while (preferences.lastDownloadedChunk < status.totalChunk) {
+                getRevokeList(status.version, preferences.lastDownloadedChunk + 1)
+            }
+            if (preferences.lastDownloadedChunk == status.totalChunk) {
+                preferences.currentVersion = preferences.requestedVersion
+                saveLastFetchDate()
+                Log.i("chunk download", "Last chunk processed, versions updated")
+            }
+        }
+    }
+
+    private fun saveLastFetchDate() {
+        preferences.drlDateLastFetch = System.currentTimeMillis()
+    }
+
+    private fun noMoreChunks(crlStatus: CrlStatus): Boolean {
+        val lastChunkDownloaded = preferences.currentChunk
+        val allChunks = crlStatus.totalChunk
+        return lastChunkDownloaded > allChunks
+    }
+
+    private fun insertListToRealm(deltaInsertList: MutableList<String>) {
+        try {
+            val config =
+                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+            val realm: Realm = Realm.getInstance(config)
+            val array = mutableListOf<RevokedPass>()
+
+            for (deltaInsert in deltaInsertList) {
+                array.add(RevokedPass(deltaInsert))
+            }
+
+            try {
+                realm.executeTransaction { transactionRealm ->
+                    transactionRealm.insertOrUpdate(array)
+                }
+            } catch (e: RealmPrimaryKeyConstraintException) {
+                e.localizedMessage?.let {
+                    Log.i("Revoke exc", it)
+                }
+            }
+            Log.i("Revoke", "Inserted")
+            val count = realm.where<RevokedPass>().findAll().size
+            Log.i("Revoke", "Inserted $count")
+            realm.close()
+        } catch (e: Exception) {
+            e.localizedMessage?.let {
+                Log.i("Revoke exc2", it)
+            }
+        }
+    }
+
+    private fun deleteAllFromRealm() {
+        try {
+            val config =
+                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+            val realm: Realm = Realm.getInstance(config)
+
+            try {
+                realm.executeTransaction { transactionRealm ->
+                    transactionRealm.deleteAll()
+                }
+            } catch (e: RealmPrimaryKeyConstraintException) {
+                e.localizedMessage?.let {
+                    Log.i("Revoke exc", it)
+                }
+            }
+            realm.close()
+        } catch (e: Exception) {
+            e.localizedMessage?.let {
+                Log.i("Revoke exc2", it)
+            }
+        }
+    }
+
+    private fun deleteListFromRealm(deltaDeleteList: MutableList<String>) {
+        try {
+            val config =
+                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+            val realm: Realm = Realm.getInstance(config)
+            try {
+                realm.executeTransaction { transactionRealm ->
+                    var count = transactionRealm.where<RevokedPass>().findAll().size
+                    Log.i("Revoke", "Before delete $count")
+                    val revokedPassesToDelete = transactionRealm.where<RevokedPass>()
+                        .`in`("hashedUVCI", deltaDeleteList.toTypedArray()).findAll()
+                    Log.i("Revoke", revokedPassesToDelete.count().toString())
+                    revokedPassesToDelete.deleteAllFromRealm()
+                    count = transactionRealm.where<RevokedPass>().findAll().size
+                    Log.i("Revoke", "After delete $count")
+                }
+            } catch (e: RealmPrimaryKeyConstraintException) {
+                e.localizedMessage?.let {
+                    Log.i("Revoke exc", it)
+                }
+            }
+            val count = realm.where<RevokedPass>().findAll().size
+            Log.i("Revoke", "deleted $count")
+            realm.close()
+        } catch (e: Exception) {
+            e.localizedMessage?.let {
+                Log.i("Revoke exc2", it)
+            }
+        }
+    }
+
+    companion object {
+        const val REALM_NAME = "VerificaC19"
         const val HEADER_KID = "x-kid"
         const val HEADER_RESUME_TOKEN = "x-resume-token"
     }

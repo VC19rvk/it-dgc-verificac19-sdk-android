@@ -17,27 +17,14 @@
  *  limitations under the License.
  *  ---license-end
  *
- *  Created by mykhailo.nester on 4/24/21 2:20 PM
+ *  Created by danielsp on 9/23/21, 11:50 AM
  */
 
-package it.ministerodellasalute.verificaC19sdk.data
+package it.ministerodellasalute.verificaC19sdk.data.local
 
-import android.content.Context
-import androidx.lifecycle.LiveData
-import java.security.cert.Certificate
+import io.realm.RealmObject
+import io.realm.annotations.PrimaryKey
+import io.realm.annotations.RealmClass
 
-/**
- *
- * This interface defines the methods to download public certificates (i.e. settings) and check
- * the download status. These are overridden by the implementing class [VerifierRepositoryImpl].
- *
- */
-interface VerifierRepository {
-
-    suspend fun syncData(applicationContext: Context): Boolean?
-    suspend fun getCertificate(kid: String): Certificate?
-    suspend fun downloadChunk()
-    suspend fun isDrlInconsistent(): Boolean
-    fun getCertificateFetchStatus(): LiveData<Boolean>
-    suspend fun checkInBlackList(kid: String): Boolean
-}
+@RealmClass
+open class RevokedPass(@PrimaryKey var hashedUVCI: String = "") : RealmObject()
