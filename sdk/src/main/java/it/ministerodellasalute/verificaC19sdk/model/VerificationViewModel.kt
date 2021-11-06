@@ -197,7 +197,7 @@ class VerificationViewModel @Inject constructor(
             _inProgress.value = false
             val certificateModel = greenCertificate.toCertificateModel(verificationResult)
 
-            val certificateIdentifier = when {
+            certificateIdentifier = when {
                 greenCertificate?.vaccinations?.get(0)?.certificateIdentifier != null -> {
                     greenCertificate?.vaccinations?.get(0)?.certificateIdentifier!!
                 }
