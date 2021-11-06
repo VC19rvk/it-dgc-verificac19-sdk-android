@@ -109,8 +109,8 @@ android {
 
         release {
             buildConfigField "String", "BASE_URL", "\"https://get.dgc.gov.it/v1/dgc/\""
-            buildConfigField "String", "BASE_URL_CRL", "\"\""
-            buildConfigField "String", "BASE_URL_CRL_REVOKES", "\"\""
+            buildConfigField "String", "BASE_URL_CRL", "\"https://get.dgc.gov.it/v1/dgc/drl/check\""
+            buildConfigField "String", "BASE_URL_CRL_REVOKES", "\"https://get.dgc.gov.it/v1/dgc/drl\""
             buildConfigField "String", "SERVER_HOST", "\"get.dgc.gov.it\""
             buildConfigField "String", "CERTIFICATE_SHA", "\"sha256/7cZJIDPacG8FS3pq6Mvxg+7yBDM/VYc2alOcbVe/e74=\""
             buildConfigField "String", "SDK_VERSION", "\"1.0.2\""
