@@ -57,18 +57,21 @@ import javax.inject.Inject
  *
  */
 class VerifierRepositoryImpl @Inject constructor(
-    private val apiService: ApiService,
-    private val preferences: Preferences,
-    private val db: AppDatabase,
-    private val keyStoreCryptor: KeyStoreCryptor,
-    private val dispatcherProvider: DispatcherProvider
+        private val apiService: ApiService,
+        private val preferences: Preferences,
+        private val db: AppDatabase,
+        private val keyStoreCryptor: KeyStoreCryptor,
+        private val dispatcherProvider: DispatcherProvider
 ) : BaseRepository(dispatcherProvider), VerifierRepository {
 
     private var crlstatus: CrlStatus? = null
     private val validCertList = mutableListOf<String>()
     private val fetchStatus: MutableLiveData<Boolean> = MutableLiveData()
+    private val maxRetryReached: MutableLiveData<Boolean> = MutableLiveData()
+
     private lateinit var context: Context
     private var realmSize: Int = 0
+    private var currentRetryNum: Int = 0
 
     override suspend fun syncData(applicationContext: Context): Boolean? {
         context = applicationContext
@@ -89,6 +92,10 @@ class VerifierRepositoryImpl @Inject constructor(
                 for (rule in validationRules) {
                     if (rule.name == "DRL_SYNC_ACTIVE") {
                         preferences.isDrlSyncActive = ConversionUtility.stringToBoolean(rule.value)
+                        break
+                    }
+                    if (rule.name == "MAX_RETRY") {
+                        preferences.maxRetryNumber = rule.value.toInt()
                         break
                     }
                 }
@@ -165,12 +172,13 @@ class VerifierRepositoryImpl @Inject constructor(
     override suspend fun getCertificate(kid: String): Certificate? {
         val key = db.keyDao().getById(kid)
         return if (key != null) keyStoreCryptor.decrypt(key.key)!!
-            .base64ToX509Certificate() else null
+                .base64ToX509Certificate() else null
     }
 
     override fun getCertificateFetchStatus(): LiveData<Boolean> {
         return fetchStatus
     }
+
 
     override suspend fun checkInBlackList(ucvi: String): Boolean
     {
@@ -182,14 +190,20 @@ class VerifierRepositoryImpl @Inject constructor(
         }
     }
 
-    private suspend fun fetchCertificate(resumeToken: Long): Boolean? {
-        return execute {
-            val tokenFormatted = if (resumeToken == -1L) "" else resumeToken.toString()
-            val response = apiService.getCertUpdate(tokenFormatted)
 
-            if (!response.isSuccessful) {
-                return@execute false
-            }
+    override fun getMaxRetryReached(): LiveData<Boolean> {
+        return maxRetryReached
+    }
+
+    override fun resetCurrentRetryStatus() {
+        currentRetryNum = 0
+        maxRetryReached.value = false
+    }
+
+    private suspend fun fetchCertificate(resumeToken: Long) {
+        val tokenFormatted = if (resumeToken == -1L) "" else resumeToken.toString()
+        val response = apiService.getCertUpdate(tokenFormatted)
+
 
             if (response.isSuccessful && response.code() == HttpURLConnection.HTTP_OK) {
                 val headers = response.headers()
@@ -230,32 +244,41 @@ class VerifierRepositoryImpl @Inject constructor(
             Log.i("CRL Status", crlstatus.toString())
 
             crlstatus?.let { crlStatus ->
-                if (outDatedVersion(crlStatus)) {
-                    if (noPendingDownload() || preferences.authorizedToDownload == 1L) {
-                        saveCrlStatusInfo(crlStatus)
-                        if (isSizeOverThreshold(crlStatus) && preferences.authorizedToDownload == 0L && !preferences.shouldInitDownload) {
-                            preferences.isSizeOverThreshold = true
+                if (isRetryAllowed()) {
+                    preferences.currentChunk = 0
+                    if (outDatedVersion(crlStatus)) {
+                        if (noPendingDownload() || preferences.authorizedToDownload == 1L) {
+                            saveCrlStatusInfo(crlStatus)
+                            if (isSizeOverThreshold(crlStatus) && preferences.authorizedToDownload == 0L && !preferences.shouldInitDownload) {
+                                preferences.isSizeOverThreshold = true
+                            } else {
+                                preferences.shouldInitDownload = false
+                                downloadChunk()
+                            }
+                        } else if (preferences.authToResume == 1L) {
+                            if (isSameChunkSize(crlStatus) && sameRequestedVersion(crlStatus)) downloadChunk()
+                            else clearDBAndPrefs()
                         } else {
-                            preferences.shouldInitDownload = false
-                            downloadChunk()
+                            preferences.authToResume = 0L
                         }
-                    } else if (preferences.authToResume == 1L) {
-                        if (isSameChunkSize(crlStatus) && sameRequestedVersion(crlStatus)) downloadChunk()
-                        else clearDBAndPrefs()
                     } else {
-                        preferences.authToResume = 0L
+                        saveLastFetchDate()
+                        checkCurrentDownloadSize()
+                        if (!isDownloadCompleted()) {
+                            Log.i("MyTag", "final reconciliation failed!")
+                            currentRetryNum += 1
+                            clearDBAndPrefs()
+                        } else Log.i("MyTag", "final reconciliation completed!")
                     }
                 } else {
-                    saveLastFetchDate()
-                    checkCurrentDownloadSize()
-                    if (!isDownloadCompleted()) {
-                        Log.i("MyTag", "final reconciliation failed!")
-                        clearDBAndPrefs()
-                    } else Log.i("MyTag", "final reconciliation completed!")
+                    maxRetryReached.postValue(true)
                 }
+
             }
         }
     }
+
+    private fun isRetryAllowed() = currentRetryNum < preferences.maxRetryNumber
 
     private fun saveCrlStatusInfo(crlStatus: CrlStatus) {
         preferences.sizeSingleChunkInByte = crlStatus.sizeSingleChunkInByte
@@ -270,8 +293,8 @@ class VerifierRepositoryImpl @Inject constructor(
 
     private fun checkCurrentDownloadSize() {
         val config =
-            RealmConfiguration.Builder().name(REALM_NAME).allowQueriesOnUiThread(true)
-                .build()
+                RealmConfiguration.Builder().name(REALM_NAME).allowQueriesOnUiThread(true)
+                        .build()
         val realm: Realm = Realm.getInstance(config)
         realm.executeTransaction { transactionRealm ->
             realmSize = transactionRealm.where<RevokedPass>().findAll().size
@@ -284,15 +307,17 @@ class VerifierRepositoryImpl @Inject constructor(
     private suspend fun getRevokeList(version: Long, chunk: Long = 1) {
         try {
             val response =
-                apiService.getRevokeList(preferences.currentVersion, chunk)
+                    apiService.getRevokeList(preferences.currentVersion, chunk)
             if (response.isSuccessful) {
                 val certificateRevocationList: CertificateRevocationList = Gson().fromJson(
-                    response.body()?.string(),
-                    CertificateRevocationList::class.java
+                        response.body()?.string(),
+                        CertificateRevocationList::class.java
                 )
                 if (version == certificateRevocationList.version) {
+                    preferences.currentChunk = preferences.currentChunk + 1
+                    val isFirstChunk = preferences.currentChunk == 1L
+                    if (isFirstChunk && certificateRevocationList.delta == null) deleteAllFromRealm()
                     processRevokeList(certificateRevocationList)
-                    preferences.lastDownloadedChunk = preferences.lastDownloadedChunk + 1
                 } else {
                     clearDBAndPrefs()
                 }
@@ -313,9 +338,6 @@ class VerifierRepositoryImpl @Inject constructor(
 
             if (revokedUcviList != null) {
                 Log.i("processRevokeList", " adding UCVI")
-                if (preferences.lastDownloadedChunk + 1 == 1L) {
-                    deleteAllFromRealm()
-                }
                 insertListToRealm(revokedUcviList)
             } else if (certificateRevocationList.delta != null) {
                 Log.i("Delta", "delta")
@@ -367,18 +389,6 @@ class VerifierRepositoryImpl @Inject constructor(
         return (crlStatus.totalSizeInByte > 5000000)
     }
 
-    private fun blockCRLdownload(crlStatus: CrlStatus): Boolean {
-        return preferences.blockCRLdownload == 1L
-    }
-
-    private fun chunkNotYetCompleted(crlStatus: CrlStatus): Boolean {
-        return !noMoreChunks(crlStatus)
-    }
-
-    private fun atLeastOneChunkDownloaded(): Boolean {
-        return (preferences.lastDownloadedChunk > 0)
-    }
-
     private fun isSameChunkSize(crlStatus: CrlStatus): Boolean {
         return (preferences.sizeSingleChunkInByte == crlStatus.sizeSingleChunkInByte)
     }
@@ -387,11 +397,10 @@ class VerifierRepositoryImpl @Inject constructor(
         crlstatus?.let { status ->
             preferences.authorizedToDownload = 1
             preferences.authToResume = -1
-            preferences.blockCRLdownload = 0
-            while (preferences.lastDownloadedChunk < status.totalChunk) {
-                getRevokeList(status.version, preferences.lastDownloadedChunk + 1)
+            while (preferences.currentChunk < status.totalChunk) {
+                getRevokeList(status.version, preferences.currentChunk + 1)
             }
-            if (preferences.lastDownloadedChunk == status.totalChunk) {
+            if (preferences.currentChunk == status.totalChunk) {
                 preferences.currentVersion = preferences.requestedVersion
                 saveLastFetchDate()
                 Log.i("chunk download", "Last chunk processed, versions updated")
@@ -412,7 +421,7 @@ class VerifierRepositoryImpl @Inject constructor(
     private fun insertListToRealm(deltaInsertList: MutableList<String>) {
         try {
             val config =
-                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+                    RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
             val realm: Realm = Realm.getInstance(config)
             val array = mutableListOf<RevokedPass>()
 
@@ -443,7 +452,7 @@ class VerifierRepositoryImpl @Inject constructor(
     private fun deleteAllFromRealm() {
         try {
             val config =
-                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+                    RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
             val realm: Realm = Realm.getInstance(config)
 
             try {
@@ -466,14 +475,14 @@ class VerifierRepositoryImpl @Inject constructor(
     private fun deleteListFromRealm(deltaDeleteList: MutableList<String>) {
         try {
             val config =
-                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+                    RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
             val realm: Realm = Realm.getInstance(config)
             try {
                 realm.executeTransaction { transactionRealm ->
                     var count = transactionRealm.where<RevokedPass>().findAll().size
                     Log.i("Revoke", "Before delete $count")
                     val revokedPassesToDelete = transactionRealm.where<RevokedPass>()
-                        .`in`("hashedUVCI", deltaDeleteList.toTypedArray()).findAll()
+                            .`in`("hashedUVCI", deltaDeleteList.toTypedArray()).findAll()
                     Log.i("Revoke", revokedPassesToDelete.count().toString())
                     revokedPassesToDelete.deleteAllFromRealm()
                     count = transactionRealm.where<RevokedPass>().findAll().size

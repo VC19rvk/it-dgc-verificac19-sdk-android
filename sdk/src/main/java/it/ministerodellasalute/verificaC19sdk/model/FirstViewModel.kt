@@ -36,25 +36,26 @@ import javax.inject.Inject
 
 @HiltViewModel
 class FirstViewModel @Inject constructor(
-    val verifierRepository: VerifierRepository,
-    private val preferences: Preferences
+        val verifierRepository: VerifierRepository,
+        private val preferences: Preferences
 ) : ViewModel() {
 
     val fetchStatus: MediatorLiveData<Boolean> = MediatorLiveData()
+
+    val maxRetryReached = MediatorLiveData<Boolean>().apply {
+        value = false
+    }
 
     init {
         fetchStatus.addSource(verifierRepository.getCertificateFetchStatus()) {
             fetchStatus.value = it
         }
-    }
 
-    fun callForDownloadChunk() {
-        viewModelScope.launch {
-            verifierRepository.downloadChunk()
+        maxRetryReached.addSource(verifierRepository.getMaxRetryReached()) {
+            maxRetryReached.value = it
         }
     }
 
-    fun getResumeToken() = preferences.resumeToken
 
     /**
      *
@@ -69,17 +70,16 @@ class FirstViewModel @Inject constructor(
     fun getSizeSingleChunkInByte() = preferences.sizeSingleChunkInByte
     fun getTotalChunk() = preferences.totalChunk //total number of chunks in a specific version
     fun getIsSizeOverThreshold() = preferences.isSizeOverThreshold
-    fun getLastDownloadedChunk() = preferences.lastDownloadedChunk
     fun getDownloadAvailable() = preferences.authorizedToDownload
     fun setDownloadAsAvailable() =
-        run { preferences.authorizedToDownload = 1L }
+            run { preferences.authorizedToDownload = 1L }
 
     fun getResumeAvailable() = preferences.authToResume
     fun setResumeAsAvailable() =
-        run { preferences.authToResume = 1L }
+            run { preferences.authToResume = 1L }
 
     fun setUnAuthResume() =
-        run { preferences.authToResume = 0L }
+            run { preferences.authToResume = 0L }
 
     fun getIsPendingDownload(): Boolean {
         return preferences.currentVersion != preferences.requestedVersion
@@ -92,6 +92,7 @@ class FirstViewModel @Inject constructor(
     fun setShouldInitDownload(value: Boolean) = run {
         preferences.shouldInitDownload = value
     }
+    fun getCurrentChunk() = preferences.currentChunk
 
     private fun getValidationRules(): Array<Rule> {
         val jsonString = preferences.validationRulesJson
@@ -100,18 +101,18 @@ class FirstViewModel @Inject constructor(
 
     fun getAppMinVersion(): String {
         return getValidationRules().find { it.name == ValidationRulesEnum.APP_MIN_VERSION.value }
-            ?.let {
-                it.value
-            } ?: run {
+                ?.let {
+                    it.value
+                } ?: run {
             ""
         }
     }
 
     private fun getSDKMinVersion(): String {
         return getValidationRules().find { it.name == ValidationRulesEnum.SDK_MIN_VERSION.value }
-            ?.let {
-                it.value
-            } ?: run {
+                ?.let {
+                    it.value
+                } ?: run {
             ""
         }
     }
@@ -123,5 +124,9 @@ class FirstViewModel @Inject constructor(
             }
         }
         return false
+    }
+
+    fun resetCurrentRetry() {
+        verifierRepository.resetCurrentRetryStatus()
     }
 }
