@@ -164,6 +164,7 @@ class VerifierRepositoryImpl @Inject constructor(
                 this.syncData(context)
             }
             db.keyDao().deleteAllExcept(validCertList.toTypedArray())
+            preferences.dateLastFetch = System.currentTimeMillis()
 
             return@execute true
         }
@@ -204,27 +205,24 @@ class VerifierRepositoryImpl @Inject constructor(
         val tokenFormatted = if (resumeToken == -1L) "" else resumeToken.toString()
         val response = apiService.getCertUpdate(tokenFormatted)
 
+        if (response.isSuccessful && response.code() == HttpURLConnection.HTTP_OK) {
+            val headers = response.headers()
+            val responseKid = headers[HEADER_KID]
+            val newResumeToken = headers[HEADER_RESUME_TOKEN]
+            val responseStr = response.body()?.stringSuspending(dispatcherProvider) ?: return
 
-            if (response.isSuccessful && response.code() == HttpURLConnection.HTTP_OK) {
-                val headers = response.headers()
-                val responseKid = headers[HEADER_KID]
-                val newResumeToken = headers[HEADER_RESUME_TOKEN]
-                val responseStr = response.body()?.stringSuspending(dispatcherProvider) ?: return@execute false
+            if (validCertList.contains(responseKid)) {
+                Log.i(VerifierRepositoryImpl::class.java.simpleName, "Cert KID verified")
+                val key = Key(kid = responseKid!!, key = keyStoreCryptor.encrypt(responseStr)!!)
+                db.keyDao().insert(key)
 
-                if (validCertList.contains(responseKid)) {
-                    Log.i(VerifierRepositoryImpl::class.java.simpleName, "Cert KID verified")
-                    val key = Key(kid = responseKid!!, key = keyStoreCryptor.encrypt(responseStr)!!)
-                    db.keyDao().insert(key)
+                preferences.resumeToken = resumeToken
 
-                    preferences.resumeToken = resumeToken
-
-                    newResumeToken?.let {
-                        val newToken = it.toLong()
-                        fetchCertificate(newToken)
-                    }
+                newResumeToken?.let {
+                    val newToken = it.toLong()
+                    fetchCertificate(newToken)
                 }
             }
-            return@execute true
         }
     }
 
