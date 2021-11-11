@@ -38,10 +38,8 @@ interface VerifierRepository {
     suspend fun getCertificate(kid: String): Certificate?
     suspend fun downloadChunks()
     suspend fun isDrlInconsistent(): Boolean
-    fun getCertificateFetchStatus(): LiveData<Boolean>
-
     suspend fun checkInBlackList(kid: String): Boolean
-
+    fun getCertificateFetchStatus(): LiveData<Boolean>
     fun getMaxRetryReached(): LiveData<Boolean>
     fun resetCurrentRetryStatus()
 }
