@@ -207,8 +207,10 @@ class VerifierRepositoryImpl @Inject constructor(
                 newResumeToken?.let {
                     val newToken = it.toLong()
                     fetchCertificate(newToken)
+                    }
                 }
             }
+            return@execute true
         }
     }
 
