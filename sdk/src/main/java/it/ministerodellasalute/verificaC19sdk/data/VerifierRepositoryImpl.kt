@@ -69,6 +69,8 @@ class VerifierRepositoryImpl @Inject constructor(
     private val validCertList = mutableListOf<String>()
     private val fetchStatus: MutableLiveData<Boolean> = MutableLiveData()
     private val maxRetryReached: MutableLiveData<Boolean> = MutableLiveData()
+    private val sizeOverLiveData: MutableLiveData<Boolean> = MutableLiveData()
+    private val initDownloadLiveData: MutableLiveData<Boolean> = MutableLiveData()
 
     private lateinit var context: Context
     private var realmSize: Int = 0
@@ -176,6 +178,10 @@ class VerifierRepositoryImpl @Inject constructor(
         return maxRetryReached
     }
 
+    override fun getSizeOverLiveData(): LiveData<Boolean> {
+        return sizeOverLiveData
+    }
+
     override fun resetCurrentRetryStatus() {
         currentRetryNum = 0
         maxRetryReached.value = false
@@ -225,17 +231,30 @@ class VerifierRepositoryImpl @Inject constructor(
                     crlstatus?.let { crlStatus ->
                         if (isRetryAllowed()) {
                             if (outDatedVersion(crlStatus)) {
+                                Log.i("outDatedVersion", "ok")
+                                Log.i("noPendingDownload", noPendingDownload().toString())
                                 if (noPendingDownload() || preferences.authorizedToDownload == 1L) {
                                     saveCrlStatusInfo(crlStatus)
-                                    if (isSizeOverThreshold(crlStatus) && preferences.authorizedToDownload == 0L && !preferences.shouldInitDownload) {
-                                        preferences.isSizeOverThreshold = true
+                                    Log.i("SizeOver", isSizeOverThreshold(crlStatus).toString())
+                                    if (isSizeOverThreshold(crlStatus) && !preferences.shouldInitDownload) {
+                                        sizeOverLiveData.postValue(true)
                                     } else {
-                                        preferences.shouldInitDownload = false
+                                        sizeOverLiveData.postValue(false)
                                         downloadChunks()
                                     }
-                                } else if (preferences.authToResume == 1L) {
-                                    if (isSameChunkSize(crlStatus) && sameRequestedVersion(crlStatus)) downloadChunks()
-                                    else {
+                                } else {
+                                    if (isSameChunkSize(crlStatus) && sameRequestedVersion(crlStatus)) {
+                                        if (preferences.authToResume == 1L) downloadChunks()
+                                        else {
+                                            Log.i(
+                                                "atLeastOneChunk",
+                                                atLeastOneChunkDownloaded().toString()
+                                            )
+                                            if (atLeastOneChunkDownloaded()) preferences.authToResume =
+                                                0L
+                                            else initDownloadLiveData.postValue(true)
+                                        }
+                                    } else {
                                         clearDBAndPrefs()
                                         this.syncData(context)
                                     }
@@ -264,6 +283,14 @@ class VerifierRepositoryImpl @Inject constructor(
                 Log.i("StatusHttpException: $e", e.message())
             }
         }
+    }
+
+    override fun getInitDownloadLiveData(): LiveData<Boolean> {
+        return initDownloadLiveData
+    }
+
+    private fun atLeastOneChunkDownloaded(): Boolean {
+        return preferences.currentChunk > 0 && preferences.totalChunk > 0
     }
 
     private suspend fun manageFinalReconciliation() {
@@ -376,7 +403,7 @@ class VerifierRepositoryImpl @Inject constructor(
     }
 
     private fun isSizeOverThreshold(crlStatus: CrlStatus): Boolean {
-        return (crlStatus.totalSizeInByte > 5000000)
+        return (crlStatus.totalSizeInByte > ConversionUtility.megaByteToByte(5f))
     }
 
     private fun isSameChunkSize(crlStatus: CrlStatus): Boolean {
@@ -410,8 +437,8 @@ class VerifierRepositoryImpl @Inject constructor(
                         Log.i("ChunkHttpException: $e", e.message())
                         break
                     }
-                } catch (e: CancellationException) {
-                    Log.i("CancellationException", e.cause.toString())
+                } catch (e: Exception) {
+                    Log.i("ConnectionIssues", e.toString())
                     preferences.authToResume = 0
                     break
                 }
@@ -422,6 +449,7 @@ class VerifierRepositoryImpl @Inject constructor(
                 preferences.totalChunk = 0
                 preferences.authorizedToDownload = 1L
                 preferences.authToResume = -1L
+                preferences.shouldInitDownload = false
                 getCRLStatus()
                 Log.i("chunk download", "Last chunk processed, versions updated")
             }
