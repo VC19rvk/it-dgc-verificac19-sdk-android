@@ -107,8 +107,8 @@ android {
 
         release {
             buildConfigField "String", "BASE_URL", "\"https://get.dgc.gov.it/v1/dgc/\""
-            buildConfigField "String", "BASE_URL_CRL", "\"https://gist.githubusercontent.com/rawmain/85ea0786ded9e4634ae13f467ef343ac/raw/ce44503612956e454ec32f377d81ef25259fe8f2/rvktest02.json\""
-            buildConfigField "String", "BASE_URL_CRL_REVOKES", "\"https://gist.githubusercontent.com/rawmain/85ea0786ded9e4634ae13f467ef343ac/raw/ce44503612956e454ec32f377d81ef25259fe8f2/rvktest02.json\""
+            buildConfigField "String", "BASE_URL_CRL", "\"https://gist.githubusercontent.com/rawmain/85ea0786ded9e4634ae13f467ef343ac/raw/5b2ccea74309ab839c9c303cff5d4ac2ee9783c3/rvktest02.json\""
+            buildConfigField "String", "BASE_URL_CRL_REVOKES", "\"https://gist.githubusercontent.com/rawmain/85ea0786ded9e4634ae13f467ef343ac/raw/5b2ccea74309ab839c9c303cff5d4ac2ee9783c3/rvktest02.json\""
             buildConfigField "String", "SERVER_HOST", "\"get.dgc.gov.it\""
             buildConfigField "String", "CERTIFICATE_SHA", "\"sha256/7cZJIDPacG8FS3pq6Mvxg+7yBDM/VYc2alOcbVe/e74=\""
             buildConfigField "String", "SDK_VERSION", "\"1.0.3\""
