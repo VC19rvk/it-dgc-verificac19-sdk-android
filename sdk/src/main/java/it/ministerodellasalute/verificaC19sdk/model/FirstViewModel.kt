@@ -46,14 +46,6 @@ class FirstViewModel @Inject constructor(
         value = false
     }
 
-    val sizeOverLiveData = MediatorLiveData<Boolean>().apply {
-        value = false
-    }
-
-    val initDownloadLiveData = MediatorLiveData<Boolean>().apply {
-        value = false
-    }
-
     init {
         preferences.shouldInitDownload = false
         fetchStatus.addSource(verifierRepository.getCertificateFetchStatus()) {
@@ -62,13 +54,6 @@ class FirstViewModel @Inject constructor(
 
         maxRetryReached.addSource(verifierRepository.getMaxRetryReached()) {
             maxRetryReached.value = it
-        }
-        sizeOverLiveData.addSource(verifierRepository.getSizeOverLiveData()){
-            sizeOverLiveData.value = it
-        }
-
-        initDownloadLiveData.addSource(verifierRepository.getInitDownloadLiveData()){
-            initDownloadLiveData.value = it
         }
     }
 
