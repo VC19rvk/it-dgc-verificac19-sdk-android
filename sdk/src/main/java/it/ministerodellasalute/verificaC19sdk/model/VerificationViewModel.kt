@@ -89,6 +89,10 @@ class VerificationViewModel @Inject constructor(
     private val _inProgress = MutableLiveData<Boolean>()
     val inProgress: LiveData<Boolean> = _inProgress
 
+    private val _scanMode = MutableLiveData<String>()
+    val scanMode: LiveData<String> = _scanMode
+
+
     /**
      *
      * This method gets the current status of the camera stored in the Shared Preferences.
@@ -119,6 +123,14 @@ class VerificationViewModel @Inject constructor(
     fun setTotemMode(value: Boolean) =
         run { preferences.isTotemModeActive = value }
 
+    fun getScanMode() = preferences.scanMode
+
+    fun setScanMode(value: String) =
+        run {
+            preferences.scanMode = value
+            _scanMode.value = value
+        }
+
     /**
      *
      * This method checks if the SDK version is obsoleted; if not, the [decode] method is called.
@@ -132,7 +144,7 @@ class VerificationViewModel @Inject constructor(
             if (isDownloadInProgress()) {
                 throw VerificaDownloadInProgressException("un download della DRL è in esecuzione")
             }
-            decode(qrCodeText, fullModel)
+            decode(qrCodeText, fullModel, preferences.scanMode!!)
         }
     }
 
@@ -141,7 +153,7 @@ class VerificationViewModel @Inject constructor(
     }
 
     @SuppressLint("SetTextI18n")
-    fun decode(code: String, fullModel: Boolean) {
+    fun decode(code: String, fullModel: Boolean, scanMode: String) {
         viewModelScope.launch {
             _inProgress.value = true
             var greenCertificate: GreenCertificate? = null
@@ -204,8 +216,13 @@ class VerificationViewModel @Inject constructor(
                 certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
             } else if (blackListCheckResult == true) {
                 certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
-            } else if (fullModel == false) {
-                if (getCertificateStatus(certificateModel) == CertificateStatus.NOT_VALID_YET) {
+            }
+            else if (scanMode == "2G" && certificateModel.tests != null) {
+                certificateSimple.certificateStatus = CertificateStatus.NOT_VALID
+            }
+            else if(fullModel == false) {
+                if (getCertificateStatus(certificateModel) == CertificateStatus.NOT_VALID_YET)
+                {
                     certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
                 }
             }

@@ -29,6 +29,7 @@ object PrefKeys {
     const val KEY_DATE_LAST_FETCH = "date_last_fetch"
     const val KEY_DRL_DATE_LAST_FETCH = "drl_date_last_fetch"
     const val KEY_VALIDATION_RULES = "validation_rules"
+    const val KEY_SCAN_MODE = "scan_mode"
 
     const val KEY_FROM_VERSION = "from_version"
     const val KEY_TOTAL_CHUNK = "total_chunk"
