@@ -89,10 +89,6 @@ class VerificationViewModel @Inject constructor(
     private val _inProgress = MutableLiveData<Boolean>()
     val inProgress: LiveData<Boolean> = _inProgress
 
-    private val _scanMode = MutableLiveData<String>()
-    val scanMode: LiveData<String> = _scanMode
-
-
     /**
      *
      * This method gets the current status of the camera stored in the Shared Preferences.
@@ -124,17 +120,6 @@ class VerificationViewModel @Inject constructor(
         run { preferences.isTotemModeActive = value }
 
     fun getScanMode() = preferences.scanMode
-
-    fun setScanMode(value: String) =
-        run {
-            preferences.scanMode = value
-            _scanMode.value = value
-        }
-
-    fun getScanModeFlag() = preferences.hasScanModeBeenChosen
-
-    fun setScanModeFlag(value: Boolean) =
-        run { preferences.hasScanModeBeenChosen = value }
 
     /**
      *
@@ -207,31 +192,6 @@ class VerificationViewModel @Inject constructor(
             _inProgress.value = false
             val certificateModel = greenCertificate.toCertificateModel(verificationResult)
 
-            var certificateSimple = CertificateSimple()
-
-            certificateSimple?.person?.familyName = certificateModel.person?.familyName
-            certificateSimple?.person?.standardisedFamilyName =
-                certificateModel.person?.standardisedFamilyName
-            certificateSimple?.person?.givenName = certificateModel.person?.givenName
-            certificateSimple?.person?.standardisedGivenName =
-                certificateModel.person?.standardisedGivenName
-            certificateSimple?.dateOfBirth = certificateModel.dateOfBirth
-
-            if (certificateIdentifier == null || certificateIdentifier == "") {
-                certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
-            } else if (blackListCheckResult == true) {
-                certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
-            }
-            else if (scanMode == "2G" && certificateModel.tests != null) {
-                certificateSimple.certificateStatus = CertificateStatus.NOT_VALID
-            }
-            else if(fullModel == false) {
-                if (getCertificateStatus(certificateModel) == CertificateStatus.NOT_VALID_YET)
-                {
-                    certificateSimple?.certificateStatus = CertificateStatus.NOT_VALID
-                }
-            }
-
             val simpleCert = CertificateSimple()
             simpleCert.person?.familyName = certificateModel.person?.familyName
             simpleCert.person?.standardisedFamilyName =
@@ -245,7 +205,13 @@ class VerificationViewModel @Inject constructor(
                 VerificaApplication.isCertificateRevoked = true
                 simpleCert.certificateStatus = CertificateStatus.NOT_VALID
             } else {
-                if (!fullModel) {
+                if (certificateIdentifier == "") {
+                    simpleCert.certificateStatus = CertificateStatus.NOT_VALID
+                } else if (blackListCheckResult) {
+                    simpleCert.certificateStatus = CertificateStatus.NOT_VALID
+                } else if (scanMode == "2G" && certificateModel.tests != null) {
+                    simpleCert.certificateStatus = CertificateStatus.NOT_VALID
+                } else if (!fullModel) {
                     when {
                         getCertificateStatus(certificateModel) == CertificateStatus.NOT_VALID_YET -> {
                             simpleCert.certificateStatus = CertificateStatus.NOT_VALID

@@ -73,6 +73,8 @@ interface Preferences {
 
     var scanMode: String?
 
+    var hasScanModeBeenChosen: Boolean
+
     var isSizeOverThreshold: Boolean
 
     var isDrlSyncActive: Boolean
@@ -80,8 +82,6 @@ interface Preferences {
     var shouldInitDownload: Boolean
 
     var maxRetryNumber: Int
-
-    var hasScanModeBeenChosen: Boolean
 
     /**
      *
@@ -185,7 +185,11 @@ class PreferencesImpl(context: Context) : Preferences {
 
     override var scanMode by StringPreference(preferences, PrefKeys.KEY_SCAN_MODE, "3G")
 
-    override var hasScanModeBeenChosen by BooleanPreference(preferences, PrefKeys.KEY_SCAN_MODE_FLAG, false)
+    override var hasScanModeBeenChosen by BooleanPreference(
+        preferences,
+        PrefKeys.KEY_SCAN_MODE_FLAG,
+        false
+    )
 
     override fun clear() {
         preferences.value.edit().clear().apply()

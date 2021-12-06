@@ -255,7 +255,6 @@ class VerifierRepositoryImpl @Inject constructor(
                                 if (noPendingDownload() || preferences.authorizedToDownload == 1L) {
                                     saveCrlStatusInfo(crlStatus)
                                     Log.i("SizeOver", isSizeOverThreshold(crlStatus).toString())
-
                                     if (isSizeOverThreshold(crlStatus) && !preferences.shouldInitDownload) {
                                         preferences.isSizeOverThreshold = true
                                         sizeOverLiveData.postValue(true)
