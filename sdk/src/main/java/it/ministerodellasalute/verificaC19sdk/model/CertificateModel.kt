@@ -39,14 +39,18 @@ data class CertificateModel(
     val tests: List<TestModel>?,
     val recoveryStatements: List<RecoveryModel>?,
     val isValid: Boolean,
-    val isCborDecoded: Boolean
+    val isCborDecoded: Boolean,
+    var isRevoked: Boolean = false,
+    var isBlackListed: Boolean = false,
+    var scanMode: String = "",
+    var certificateIdentifier: String = "",
 )
 
 data class PersonModel(
-    val standardisedFamilyName: String,
-    val familyName: String?,
-    val standardisedGivenName: String?,
-    val givenName: String?
+    val standardisedFamilyName: String = "",
+    val familyName: String = "",
+    val standardisedGivenName: String = "",
+    val givenName: String = ""
 )
 
 data class VaccinationModel(
