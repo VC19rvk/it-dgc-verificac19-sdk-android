@@ -102,7 +102,7 @@ android {
             buildConfigField "String", "BASE_URL", "\"https://testaka4.sogei.it/v1/dgc/\""
             buildConfigField "String", "SERVER_HOST", "\"testaka4.sogei.it\""
             buildConfigField "String", "CERTIFICATE_SHA", "\"sha256/R0d+cI8vTcJ3sCbpfQCH0OmdBbulPH3deYhngzOqJVA=\""
-            buildConfigField "String", "SDK_VERSION", "\"1.0.4\""
+            buildConfigField "String", "SDK_VERSION", "\"1.1.0\""
         }
 
         release {
@@ -111,7 +111,7 @@ android {
             buildConfigField "String", "BASE_URL_CRL_REVOKES", "\"https://d5c8503f-abf9-44d6-8cd3-3acab80728db.mock.pstmn.io/v1/dgc/drl/check\""
             buildConfigField "String", "SERVER_HOST", "\"get.dgc.gov.it\""
             buildConfigField "String", "CERTIFICATE_SHA", "\"sha256/7cZJIDPacG8FS3pq6Mvxg+7yBDM/VYc2alOcbVe/e74=\""
-            buildConfigField "String", "SDK_VERSION", "\"1.0.4\""
+            buildConfigField "String", "SDK_VERSION", "\"1.1.0\""
 
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
