@@ -34,11 +34,9 @@ import java.security.cert.Certificate
  *
  */
 interface VerifierRepository {
-
     suspend fun syncData(applicationContext: Context): Boolean?
     suspend fun getCertificate(kid: String): Certificate?
     suspend fun downloadChunks()
-    suspend fun isDrlInconsistent(): Boolean
     suspend fun checkInBlackList(kid: String): Boolean
     fun getCertificateFetchStatus(): LiveData<Boolean>
     fun getMaxRetryReached(): LiveData<Boolean>

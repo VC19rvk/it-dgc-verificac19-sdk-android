@@ -31,7 +31,8 @@ enum class CertificateStatus {
     NOT_VALID_YET,
     VALID,
     REVOKED,
-    NOT_EU_DCC;
+    NOT_EU_DCC,
+    TEST_NEEDED;
 }
 
 fun CertificateStatus.applyFullModel(fullModel: Boolean): CertificateStatus {

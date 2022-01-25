@@ -17,19 +17,13 @@
  *  limitations under the License.
  *  ---license-end
  *
- *  Created by Mykhailo Nester on 4/23/21 9:48 AM
+ *  Created by kaizen-7 on 23/12/21, 10:32
  */
 
-package it.ministerodellasalute.verificaC19sdk
+package it.ministerodellasalute.verificaC19sdk.data.local
 
-import android.app.Application
-import dagger.hilt.android.HiltAndroidApp
-
-/**
- *
- * This class represents the [Application] of the SDK.
- *
- */
-
-@HiltAndroidApp
-class VerificaSDKApplication : Application()
+object ScanMode {
+    const val STANDARD = "3G"
+    const val STRENGTHENED = "2G"
+    const val BOOSTER = "BOOSTED"
+}

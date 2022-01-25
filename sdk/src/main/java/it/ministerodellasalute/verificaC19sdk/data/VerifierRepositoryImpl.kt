@@ -37,6 +37,7 @@ import it.ministerodellasalute.verificaC19sdk.data.local.Blacklist
 import it.ministerodellasalute.verificaC19sdk.data.local.Key
 import it.ministerodellasalute.verificaC19sdk.data.local.Preferences
 import it.ministerodellasalute.verificaC19sdk.data.local.RevokedPass
+import it.ministerodellasalute.verificaC19sdk.data.local.VerificaC19sdkRealmModule
 import it.ministerodellasalute.verificaC19sdk.data.remote.ApiService
 import it.ministerodellasalute.verificaC19sdk.data.remote.model.CertificateRevocationList
 import it.ministerodellasalute.verificaC19sdk.data.remote.model.CrlStatus
@@ -49,7 +50,6 @@ import it.ministerodellasalute.verificaC19sdk.util.ConversionUtility
 import retrofit2.HttpException
 import java.net.HttpURLConnection
 import java.security.cert.Certificate
-import java.util.concurrent.CancellationException
 import javax.inject.Inject
 
 /**
@@ -80,7 +80,6 @@ class VerifierRepositoryImpl @Inject constructor(
 
     override suspend fun syncData(applicationContext: Context): Boolean? {
         context = applicationContext
-        Realm.init(applicationContext)
 
         return execute {
             fetchStatus.postValue(true)
@@ -107,37 +106,26 @@ class VerifierRepositoryImpl @Inject constructor(
                 return@execute false
             }
             preferences.validationRulesJson = body.stringSuspending(dispatcherProvider)
-            var jsonBlackList =
+            val rules: Array<Rule> =
                 Gson().fromJson(preferences.validationRulesJson, Array<Rule>::class.java)
-            var listasString =
-                jsonBlackList.find { it.name == ValidationRulesEnum.BLACK_LIST_UVCI.value }?.let {
-                    it.value.trim()
-                } ?: run {
-                    ""
-                }
-
+            val listAsString: String =
+                rules.find { it.name == ValidationRulesEnum.BLACK_LIST_UVCI.value }?.value?.trim()
+                    ?: run {
+                        ""
+                    }
             db.blackListDao().deleteAll()
-            val list_blacklist = listasString.split(";")
-            for (blacklist_item in list_blacklist) {
-                if (blacklist_item != null && blacklist_item.trim() != "") {
-                    var blacklist_object = Blacklist(blacklist_item)
-                    db.blackListDao().insert(blacklist_object)
+            listAsString.split(";").forEach {
+                if (it.trim() != "") {
+                    val blackListDto = Blacklist(it)
+                    db.blackListDao().insert(blackListDto)
                 }
             }
+            preferences.isDrlSyncActive =
+                rules.find { it.name == ValidationRulesEnum.DRL_SYNC_ACTIVE.name }
+                    ?.let { ConversionUtility.stringToBoolean(it.value) } ?: true
 
-            jsonBlackList.let {
-                for (rule in it) {
-                    if (rule.name == "DRL_SYNC_ACTIVE") {
-                        preferences.isDrlSyncActive = ConversionUtility.stringToBoolean(rule.value)
-                        break
-                    }
-                    if (rule.name == "MAX_RETRY") {
-                        preferences.maxRetryNumber = rule.value.toInt()
-                        break
-                    }
-                }
-            }
-
+            preferences.maxRetryNumber =
+                rules.find { it.name == ValidationRulesEnum.MAX_RETRY.name }?.value?.toInt() ?: 1
             return@execute true
         }
     }
@@ -236,15 +224,6 @@ class VerifierRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun isDrlInconsistent(): Boolean {
-        val response = apiService.getCRLStatus(preferences.currentVersion)
-        if (response.isSuccessful) {
-            val status = Gson().fromJson(response.body()?.string(), CrlStatus::class.java)
-            return outDatedVersion(status)
-        }
-        return false
-    }
-
     private suspend fun getCRLStatus() {
         try {
             if (isRetryAllowed()) {
@@ -262,10 +241,8 @@ class VerifierRepositoryImpl @Inject constructor(
                                     saveCrlStatusInfo(crlStatus)
                                     Log.i("SizeOver", isSizeOverThreshold(crlStatus).toString())
                                     if (isSizeOverThreshold(crlStatus) && !preferences.shouldInitDownload) {
-                                        preferences.isSizeOverThreshold = true
                                         sizeOverLiveData.postValue(true)
                                     } else {
-                                        preferences.shouldInitDownload = false
                                         sizeOverLiveData.postValue(false)
                                         downloadChunks()
                                     }
@@ -349,9 +326,11 @@ class VerifierRepositoryImpl @Inject constructor(
     }
 
     private fun checkCurrentDownloadSize() {
-        val config =
-            RealmConfiguration.Builder().name(REALM_NAME).allowQueriesOnUiThread(true)
-                .build()
+        val config = RealmConfiguration.Builder()
+            .name(REALM_NAME)
+            .modules(VerificaC19sdkRealmModule())
+            .allowQueriesOnUiThread(true)
+            .build()
         val realm: Realm = Realm.getInstance(config)
         realm.executeTransaction { transactionRealm ->
             val revokedPasses = transactionRealm.where<RevokedPass>().findAll()
@@ -504,8 +483,11 @@ class VerifierRepositoryImpl @Inject constructor(
 
     private fun insertListToRealm(deltaInsertList: MutableList<String>) {
         try {
-            val config =
-                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+            val config = RealmConfiguration.Builder()
+                .name(REALM_NAME)
+                .modules(VerificaC19sdkRealmModule())
+                .allowQueriesOnUiThread(true)
+                .build()
             val realm: Realm = Realm.getInstance(config)
             val array = mutableListOf<RevokedPass>()
 
@@ -535,8 +517,11 @@ class VerifierRepositoryImpl @Inject constructor(
 
     private fun deleteAllFromRealm() {
         try {
-            val config =
-                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+            val config = RealmConfiguration.Builder()
+                .name(REALM_NAME)
+                .modules(VerificaC19sdkRealmModule())
+                .allowQueriesOnUiThread(true)
+                .build()
             val realm: Realm = Realm.getInstance(config)
 
             try {
@@ -558,8 +543,11 @@ class VerifierRepositoryImpl @Inject constructor(
 
     private fun deleteListFromRealm(deltaDeleteList: MutableList<String>) {
         try {
-            val config =
-                RealmConfiguration.Builder().name(REALM_NAME).allowWritesOnUiThread(true).build()
+            val config = RealmConfiguration.Builder()
+                .name(REALM_NAME)
+                .modules(VerificaC19sdkRealmModule())
+                .allowQueriesOnUiThread(true)
+                .build()
             val realm: Realm = Realm.getInstance(config)
             try {
                 realm.executeTransaction { transactionRealm ->
